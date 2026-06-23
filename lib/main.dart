@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'dart:async';
+import 'package:flutter/services.dart';
 import 'services/storage_service.dart';
 import 'services/translation_service.dart';
+import 'services/notification_service.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/quran_screen.dart';
 import 'screens/prayer_times_screen.dart';
@@ -9,106 +11,216 @@ import 'screens/qibla_screen.dart';
 import 'screens/tasbih_screen.dart';
 import 'screens/azkar_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/surah_reader_screen.dart';
+import 'screens/quran_download_screen.dart';
+import 'screens/splash_screen.dart';
+import 'services/api_service.dart';
+import 'services/audio_manager.dart';
+import 'theme/app_colors.dart';
+import 'widgets/islamic_logo_painter.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Android Alarm Manager
+  await AndroidAlarmManager.initialize();
+
   final storage = await StorageService.getInstance();
   TranslationService.setLanguage(storage.getString('lang_code', defaultValue: 'ar'));
-  runApp(NoorApp(storage: storage));
+  
+  // Initialize Notification Service
+  final notifications = NotificationService();
+  await notifications.init();
+
+  // Initialize Audio Manager
+  AudioManager.instance.init(storage);
+
+  runApp(AyaApp(storage: storage));
 }
 
-class NoorApp extends StatefulWidget {
+class AyaApp extends StatefulWidget {
   final StorageService storage;
 
-  const NoorApp({Key? key, required this.storage}) : super(key: key);
+  const AyaApp({super.key, required this.storage});
 
   @override
-  State<NoorApp> createState() => _NoorAppState();
+  State<AyaApp> createState() => _AyaAppState();
 }
 
-class _NoorAppState extends State<NoorApp> {
-  bool _isDarkMode = true;
+class _AyaAppState extends State<AyaApp> {
+  String _activeTheme = 'dark';
   String _langCode = 'ar';
 
   @override
   void initState() {
     super.initState();
-    _isDarkMode = widget.storage.isDarkMode();
+    _activeTheme = widget.storage.getString('theme_preset', defaultValue: 'dark');
     _langCode = widget.storage.getString('lang_code', defaultValue: 'ar');
     TranslationService.setLanguage(_langCode);
   }
 
   void _updateTheme() {
     setState(() {
-      _isDarkMode = widget.storage.isDarkMode();
+      _activeTheme = widget.storage.getString('theme_preset', defaultValue: 'dark');
       _langCode = widget.storage.getString('lang_code', defaultValue: 'ar');
       TranslationService.setLanguage(_langCode);
     });
   }
 
+  ThemeData _getThemeData(String themeName) {
+    switch (themeName) {
+      case 'light':
+        return ThemeData(
+          brightness: Brightness.light,
+          scaffoldBackgroundColor: const Color(0xFFFAF9F5),
+          primaryColor: AppColors.teal,
+          cardColor: Colors.white,
+          chipTheme: const ChipThemeData(backgroundColor: Color(0xFFF1F5F9)),
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
+            bodyMedium: TextStyle(color: Color(0xFF64748B)),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.white,
+            foregroundColor: AppColors.teal,
+            elevation: 0,
+            iconTheme: IconThemeData(color: Color(0xFFB45309)),
+          ),
+          bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+            backgroundColor: Colors.white,
+            selectedItemColor: Color(0xFFB45309),
+            unselectedItemColor: Color(0xFF94A3B8),
+            elevation: 8,
+          ), dialogTheme: const DialogThemeData(backgroundColor: Colors.white),
+        );
+      case 'black':
+        return ThemeData(
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: Colors.black,
+          primaryColor: AppColors.gold,
+          cardColor: const Color(0xFF0D0D0D),
+          chipTheme: const ChipThemeData(backgroundColor: Color(0xFF262626)),
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(color: Color(0xFFF8FAFC), fontWeight: FontWeight.w500),
+            bodyMedium: TextStyle(color: Color(0xFFA3A3A3)),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.black,
+            foregroundColor: AppColors.gold,
+            elevation: 0,
+            iconTheme: IconThemeData(color: AppColors.gold),
+          ),
+          bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+            backgroundColor: Colors.black,
+            selectedItemColor: AppColors.gold,
+            unselectedItemColor: Color(0xFF525252),
+            elevation: 8,
+          ), dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF1A1A1A)),
+        );
+      case 'dark_monet':
+        return ThemeData(
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: const Color(0xFF0D1211),
+          primaryColor: const Color(0xFF14B8A6),
+          cardColor: const Color(0xFF161F1E),
+          chipTheme: const ChipThemeData(backgroundColor: Color(0xFF233331)),
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(color: Color(0xFFF2F4F3), fontWeight: FontWeight.w500),
+            bodyMedium: TextStyle(color: Color(0xFF869A96)),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFF0D1211),
+            foregroundColor: Color(0xFF14B8A6),
+            elevation: 0,
+            iconTheme: IconThemeData(color: Color(0xFF14B8A6)),
+          ),
+          bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+            backgroundColor: Color(0xFF0F1514),
+            selectedItemColor: Color(0xFF14B8A6),
+            unselectedItemColor: Color(0xFF4C5D5A),
+            elevation: 8,
+          ), dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF1D2927)),
+        );
+      case 'white_monet':
+        return ThemeData(
+          brightness: Brightness.light,
+          scaffoldBackgroundColor: const Color(0xFFF2F6F4),
+          primaryColor: AppColors.teal,
+          cardColor: Colors.white,
+          chipTheme: const ChipThemeData(backgroundColor: Color(0xFFE2E8F0)),
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(color: Color(0xFF1F2927), fontWeight: FontWeight.w500),
+            bodyMedium: TextStyle(color: Color(0xFF5A7571)),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFFF2F6F4),
+            foregroundColor: AppColors.teal,
+            elevation: 0,
+            iconTheme: IconThemeData(color: AppColors.teal),
+          ),
+          bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+            backgroundColor: Colors.white,
+            selectedItemColor: AppColors.teal,
+            unselectedItemColor: Color(0xFF94A3B8),
+            elevation: 8,
+          ), dialogTheme: const DialogThemeData(backgroundColor: Colors.white),
+        );
+      case 'dark':
+      default:
+        return ThemeData(
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: const Color(0xFF07090E),
+          primaryColor: AppColors.teal,
+          cardColor: const Color(0xFF111520),
+          chipTheme: const ChipThemeData(backgroundColor: Color(0xFF1E293B)),
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(color: Color(0xFFF8FAFC), fontWeight: FontWeight.w500),
+            bodyMedium: TextStyle(color: Color(0xFF94A3B8)),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFF07090E),
+            foregroundColor: AppColors.gold,
+            elevation: 0,
+            iconTheme: IconThemeData(color: AppColors.gold),
+          ),
+          bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+            backgroundColor: Color(0xFF0D101A),
+            selectedItemColor: AppColors.gold,
+            unselectedItemColor: Color(0xFF475569),
+            elevation: 8,
+          ), dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF161C2C)),
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final themeData = _getThemeData(_activeTheme);
     return MaterialApp(
-      title: 'Noor - Islamic App',
+      title: 'Aya - Islamic App',
       debugShowCheckedModeBanner: false,
-      themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      
-      // Warm Sand Light Theme
-      theme: ThemeData(
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF4F6F0),
-        primaryColor: const Color(0xFF0F766E),
-        cardColor: Colors.white,
-        dialogBackgroundColor: Colors.white,
-        chipTheme: const ChipThemeData(
-          backgroundColor: Color(0xFFECEFF1),
-        ),
-        textTheme: const TextTheme(
-          bodyLarge: TextStyle(color: Color(0xFF1E293B)),
-          bodyMedium: TextStyle(color: Color(0xFF475569)),
-        ),
-        appBarTheme: const AppBarTheme(
-          color: Color(0xFF0F766E),
-          foregroundColor: Colors.white,
-        ),
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          backgroundColor: Colors.white,
-          selectedItemColor: Color(0xFFB45309),
-          unselectedItemColor: Color(0xFF64748B),
-        ),
-      ),
-
-      // Premium Obsidian Dark Theme
-      darkTheme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0B0F19),
-        primaryColor: const Color(0xFF054F37),
-        cardColor: const Color(0xFF121B2F),
-        dialogBackgroundColor: const Color(0xFF1E293B),
-        chipTheme: const ChipThemeData(
-          backgroundColor: Color(0xFF1E293B),
-        ),
-        textTheme: const TextTheme(
-          bodyLarge: TextStyle(color: Color(0xFFF8FAFC)),
-          bodyMedium: TextStyle(color: Color(0xFF94A3B8)),
-        ),
-        appBarTheme: const AppBarTheme(
-          color: Color(0xFF0F172A),
-          foregroundColor: Colors.white,
-        ),
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          backgroundColor: Color(0xFF0F172A),
-          selectedItemColor: Color(0xFFE5C158),
-          unselectedItemColor: Color(0xFF64748B),
-        ),
-      ),
-      
-      home: Directionality(
-        textDirection: TranslationService.isArabic ? TextDirection.rtl : TextDirection.ltr,
-        child: MainScaffold(
-          storage: widget.storage,
-          onThemeChanged: _updateTheme,
-        ),
+      theme: themeData,
+      locale: Locale(TranslationService.currentLanguage),
+      supportedLocales: const [
+        Locale('ar'),
+        Locale('en'),
+      ],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      builder: (context, child) {
+        return Directionality(
+          textDirection: TranslationService.isArabic ? TextDirection.rtl : TextDirection.ltr,
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      home: SplashScreen(
+        storage: widget.storage,
+        onThemeChanged: _updateTheme,
       ),
     );
   }
@@ -119,123 +231,186 @@ class MainScaffold extends StatefulWidget {
   final VoidCallback onThemeChanged;
 
   const MainScaffold({
-    Key? key,
+    super.key,
     required this.storage,
     required this.onThemeChanged,
-  }) : super(key: key);
+  });
 
   @override
   State<MainScaffold> createState() => _MainScaffoldState();
 }
 
-class _MainScaffoldState extends State<MainScaffold> {
+class _MainScaffoldState extends State<MainScaffold> with SingleTickerProviderStateMixin {
   int _currentTab = 0;
-  
-  // Audio Player variables
-  final AudioPlayer _audioPlayer = AudioPlayer();
-  bool _isPlaying = false;
-  String _playingTrackTitle = '';
-  String _playingTrackSubtitle = '';
-  int _playingSurahNum = 0;
-  int _playingAyahNum = 0;
-  String _currentAudioUrl = '';
+  int _azkarInitialTab = 0;
+  Timer? _focusTimer;
+  Timer? _autoLockTimer;
+  int _focusTimeRemaining = 0;
+  bool _isFocusOverlayShowing = false;
+  late AnimationController _pulseController;
+  DateTime? _lastPressedAt;
+  StreamSubscription<String?>? _notificationSubscription;
 
   @override
   void initState() {
     super.initState();
-    
-    // Listen to player states
-    _audioPlayer.onPlayerStateChanged.listen((state) {
-      if (mounted) {
-        setState(() {
-          _isPlaying = (state == PlayerState.playing);
-        });
-      }
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    );
+
+    _autoLockTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      _checkAutoStartFocusLock();
     });
 
-    _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted) {
+    _applyWakeLockOnLaunch();
+
+    _notificationSubscription = NotificationService.selectNotificationStream.stream.listen((payload) {
+      if (payload == 'prayer_times') {
         setState(() {
-          _isPlaying = false;
+          _currentTab = 2; // Switch to Prayer Times tab
         });
-        _handleAudioCompletion();
+      } else if (payload == 'azkar_morning') {
+        setState(() {
+          _azkarInitialTab = 0; // Morning sub-tab
+          _currentTab = 5; // Azkar tab
+        });
+      } else if (payload == 'azkar_evening') {
+        setState(() {
+          _azkarInitialTab = 1; // Evening sub-tab
+          _currentTab = 5; // Azkar tab
+        });
+      } else if (payload == 'quran_verse') {
+        setState(() {
+          _currentTab = 1; // Quran tab
+        });
       }
     });
+  }
+
+  Future<void> _applyWakeLockOnLaunch() async {
+    final keepAwake = widget.storage.getBool('keep_screen_awake', defaultValue: false);
+    if (keepAwake) {
+      try {
+        const platform = MethodChannel('com.noor.noor_app/system');
+        await platform.invokeMethod('setKeepScreenOn', {'enabled': true});
+      } catch (_) {}
+    }
   }
 
   @override
   void dispose() {
-    _audioPlayer.dispose();
+    _focusTimer?.cancel();
+    _autoLockTimer?.cancel();
+    _pulseController.dispose();
+    _notificationSubscription?.cancel();
     super.dispose();
   }
 
-  void _handleAudioCompletion() {
-    // If continuous play is enabled, auto-play next verse if applicable
-    final continuous = widget.storage.getBool('setting_continuous_play', defaultValue: true);
-    if (continuous && _playingAyahNum > 0) {
-      // Auto increment ayah index and fetch next url
-      final nextAyah = _playingAyahNum + 1;
-      // In a production build we'd fetch the next ayah url.
-      // For now we stop or loop.
+  void _checkAutoStartFocusLock() {
+    final autoStart = widget.storage.getBool('focus_auto_start', defaultValue: false);
+    final duration = widget.storage.getInt('focus_lock_duration', defaultValue: 0);
+    if (!autoStart || duration <= 0 || _focusTimeRemaining > 0) return;
+
+    final nowStr = DateTime.now().toIso8601String().substring(11, 16); // "HH:mm"
+    
+    final fajr = widget.storage.getString('widget_prayer_fajr').split(' ')[0];
+    final dhuhr = widget.storage.getString('widget_prayer_dhuhr').split(' ')[0];
+    final asr = widget.storage.getString('widget_prayer_asr').split(' ')[0];
+    final maghrib = widget.storage.getString('widget_prayer_maghrib').split(' ')[0];
+    final isha = widget.storage.getString('widget_prayer_isha').split(' ')[0];
+
+    if (nowStr == fajr || nowStr == dhuhr || nowStr == asr || nowStr == maghrib || nowStr == isha) {
+      startFocusLock(duration);
     }
   }
 
-  void _playAudio(int surahNum, String surahName, int ayahNum, String audioUrl) async {
-    try {
-      if (_isPlaying && _currentAudioUrl == audioUrl) {
-        await _audioPlayer.pause();
-        setState(() => _isPlaying = false);
-        return;
-      }
-
-      await _audioPlayer.stop();
-      await _audioPlayer.play(UrlSource(audioUrl));
-      
-      setState(() {
-        _playingSurahNum = surahNum;
-        _playingAyahNum = ayahNum;
-        _playingTrackTitle = surahName;
-        _playingTrackSubtitle = ayahNum == 0 ? "Full Surah Recitation" : "Ayah $ayahNum";
-        _currentAudioUrl = audioUrl;
-        _isPlaying = true;
-      });
-
-      // Save bookmark as last played/read
-      if (ayahNum > 0) {
-        widget.storage.addBookmark(surahNum, surahName, ayahNum);
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Audio playback error: $e')),
-      );
-    }
-  }
-
-  void _togglePlayPause() async {
-    if (_isPlaying) {
-      await _audioPlayer.pause();
-      setState(() => _isPlaying = false);
-    } else {
-      if (_currentAudioUrl.isNotEmpty) {
-        await _audioPlayer.resume();
-        setState(() => _isPlaying = true);
-      }
-    }
-  }
-
-  void _stopAudio() async {
-    await _audioPlayer.stop();
+  void startFocusLock(int minutes) {
+    if (minutes <= 0) return;
+    _focusTimer?.cancel();
+    _pulseController.repeat(reverse: true);
     setState(() {
-      _isPlaying = false;
-      _playingTrackTitle = '';
-      _playingTrackSubtitle = '';
-      _currentAudioUrl = '';
+      _focusTimeRemaining = minutes * 60;
+      _isFocusOverlayShowing = true;
     });
+
+    _focusTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_focusTimeRemaining <= 1) {
+        timer.cancel();
+        _pulseController.stop();
+        setState(() {
+          _focusTimeRemaining = 0;
+          _isFocusOverlayShowing = false;
+        });
+      } else {
+        setState(() {
+          _focusTimeRemaining--;
+        });
+      }
+    });
+  }
+
+  String _formatFocusTime() {
+    final minutes = (_focusTimeRemaining ~/ 60).toString().padLeft(2, '0');
+    final seconds = (_focusTimeRemaining % 60).toString().padLeft(2, '0');
+    return "$minutes:$seconds";
+  }
+
+  void _bypassFocusLock() {
+    _focusTimer?.cancel();
+    _pulseController.stop();
+    setState(() {
+      _focusTimeRemaining = 0;
+      _isFocusOverlayShowing = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(TranslationService.isArabic ? "تم تجاوز قفل التركيز" : "Focus Lock Bypassed"),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
   }
 
   Map<String, dynamic> _getLastBookmark() {
     final bookmarks = widget.storage.getBookmarks();
     return bookmarks.isNotEmpty ? bookmarks.first : {};
+  }
+
+  void _navigateToBookmark() async {
+    final lastBookmark = _getLastBookmark();
+    if (lastBookmark.isEmpty) return;
+
+    final surahNum = lastBookmark['surahNumber'] as int;
+    final ayahNum = lastBookmark['ayahNumber'] as int;
+
+    // Switch to Quran Tab
+    setState(() {
+      _currentTab = 1;
+    });
+
+    try {
+      final surahs = await ApiService.fetchSurahList();
+      final surah = surahs.firstWhere((s) => s.number == surahNum);
+
+      if (mounted) {
+        unawaited(Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => SurahReaderScreen(
+              surah: surah,
+              storage: widget.storage,
+              initialAyahNumber: ayahNum,
+            ),
+          ),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(TranslationService.isArabic ? 'فشل تحميل الإشارة المرجعية: $e' : 'Failed to load bookmark: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -247,12 +422,20 @@ class _MainScaffoldState extends State<MainScaffold> {
     final List<Widget> screens = [
       DashboardScreen(
         storage: widget.storage, 
-        onTabChange: (index) => setState(() => _currentTab = index),
+        onTabChange: (index, {subTab}) {
+          setState(() {
+            _currentTab = index;
+            if (subTab != null) {
+              _azkarInitialTab = subTab;
+            }
+          });
+        },
         lastBookmark: _getLastBookmark(),
+        onContinueReading: _navigateToBookmark,
+        onStartFocusLock: (mins) => startFocusLock(mins),
       ),
       QuranScreen(
         storage: widget.storage, 
-        onPlayAudio: _playAudio,
       ),
       PrayerTimesScreen(
         storage: widget.storage,
@@ -265,6 +448,7 @@ class _MainScaffoldState extends State<MainScaffold> {
       ),
       AzkarScreen(
         storage: widget.storage,
+        initialTabIndex: _azkarInitialTab,
       ),
     ];
 
@@ -277,141 +461,325 @@ class _MainScaffoldState extends State<MainScaffold> {
       TranslationService.t('azkar'),
     ];
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          tabTitles[_currentTab],
-          style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5, fontSize: 18),
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        if (_currentTab != 0) {
+          setState(() {
+            _currentTab = 0;
+          });
+          return;
+        }
+        final now = DateTime.now();
+        if (_lastPressedAt == null || now.difference(_lastPressedAt!) > const Duration(seconds: 2)) {
+          _lastPressedAt = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                TranslationService.isArabic
+                    ? "اضغط مرتين للخروج من التطبيق"
+                    : "Press back again to exit"
+              ),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          return;
+        }
+        await SystemNavigator.pop();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            tabTitles[_currentTab],
+            style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5, fontSize: 18),
+          ),
+          backgroundColor: theme.appBarTheme.backgroundColor,
+          elevation: 0,
+          actions: [
+            if (_currentTab == 1)
+              IconButton(
+                icon: Icon(Icons.download_for_offline, color: theme.appBarTheme.iconTheme?.color ?? const Color(0xFFE5C158)),
+                tooltip: TranslationService.isArabic ? 'إدارة التحميلات' : 'Downloads',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => QuranDownloadScreen(storage: widget.storage),
+                    ),
+                  );
+                },
+              ),
+            IconButton(
+              icon: Icon(Icons.settings, color: theme.appBarTheme.iconTheme?.color ?? const Color(0xFFE5C158)),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => SettingsScreen(
+                      storage: widget.storage,
+                      onThemeChanged: widget.onThemeChanged,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
         ),
-        backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFF0F766E),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings, color: Color(0xFFE5C158)),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => SettingsScreen(
-                    storage: widget.storage,
-                    onThemeChanged: widget.onThemeChanged,
+        body: ValueListenableBuilder<AudioPlayState>(
+          valueListenable: AudioManager.instance.playState,
+          builder: (context, audioState, child) {
+            final hasPlayer = audioState.title.isNotEmpty;
+            return Stack(
+              children: [
+                Padding(
+                  padding: EdgeInsets.only(bottom: hasPlayer ? 80.0 : 0.0),
+                  child: IndexedStack(
+                    index: _currentTab,
+                    children: screens,
                   ),
                 ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // Current Active Tab
-          screens[_currentTab],
-
-          // Floating Audio Player Widget (Bottom overlay)
-          if (_playingTrackTitle.isNotEmpty)
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 8,
-              child: Card(
-                color: isDark ? const Color(0xFF1E293B) : const Color(0xFFECEFF1),
-                elevation: 8,
-                shadowColor: Colors.black.withOpacity(0.4),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE5C158).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
+                if (hasPlayer)
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 8,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF111520).withOpacity(0.9) : Colors.white.withOpacity(0.9),
+                        border: Border.all(
+                          color: const Color(0xFFE5C158).withOpacity(0.2),
+                          width: 1.5,
                         ),
-                        child: const Icon(Icons.music_note, color: Color(0xFFE5C158), size: 18),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 20,
+                            offset: const Offset(0, 10),
+                          )
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                        child: Row(
                           children: [
-                            Text(
-                              _playingTrackTitle,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              _playingTrackSubtitle,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.6),
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFFE5C158), Color(0xFFB45309)],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              child: const Icon(Icons.music_note, color: Colors.black, size: 20),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    audioState.title,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    audioState.subtitle,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.6),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: Icon(audioState.isPlaying ? Icons.pause : Icons.play_arrow, color: const Color(0xFFE5C158)),
+                              onPressed: () => AudioManager.instance.togglePlayPause(),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 18, color: Colors.white60),
+                              onPressed: () => AudioManager.instance.stop(),
                             ),
                           ],
                         ),
                       ),
-                      IconButton(
-                        icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow, color: const Color(0xFFE5C158)),
-                        onPressed: _togglePlayPause,
+                    ),
+                  ),
+
+            // Focus Lock Screen Overlay
+            if (_isFocusOverlayShowing)
+              Positioned.fill(
+                child: PopScope(
+                  canPop: false,
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF041A16), Color(0xFF000806)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                    ),
+                    ),
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Spacer(),
+                            // Pulsing Golden Vector Star
+                            ScaleTransition(
+                              scale: Tween<double>(begin: 0.92, end: 1.08).animate(
+                                CurvedAnimation(parent: _pulseController, curve: Curves.easeInOutCubic),
+                              ),
+                              child: FadeTransition(
+                                opacity: Tween<double>(begin: 0.7, end: 1.0).animate(
+                                  CurvedAnimation(parent: _pulseController, curve: Curves.easeInOutCubic),
+                                ),
+                                child: Container(
+                                  width: 140,
+                                  height: 140,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFFE5C158).withOpacity(0.15),
+                                        blurRadius: 40,
+                                        spreadRadius: 2,
+                                      )
+                                    ],
+                                  ),
+                                  child: CustomPaint(
+                                    painter: IslamicLogoPainter(
+                                      animationValue: _pulseController.value,
+                                      color: const Color(0xFFE5C158),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 48),
+                            
+                            // Focus Title
+                            Text(
+                              TranslationService.t('focus_active'),
+                              style: const TextStyle(
+                                color: Color(0xFFE5C158),
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.5,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 16),
+                            
+                            // Large Timer Display
+                            Text(
+                              _formatFocusTime(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 56,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 2,
+                                fontFeatures: [FontFeature.tabularFigures()],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            
+                            // Quote / Warning text
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                              child: Text(
+                                TranslationService.t('focus_warning'),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 15,
+                                  height: 1.6,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                            
+                            const Spacer(),
+                            
+                            // Emergency Bypass trigger (Double Tap)
+                            GestureDetector(
+                              onDoubleTap: _bypassFocusLock,
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Text(
+                                  TranslationService.t('focus_bypass'),
+                                  style: const TextStyle(
+                                    color: Colors.white24,
+                                    fontSize: 12,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18, color: Colors.white60),
-                        onPressed: _stopAudio,
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
+          ],
+        );
+      },
+    ),
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: _currentTab,
+          onTap: (index) {
+            setState(() {
+              _currentTab = index;
+            });
+          },
+          type: BottomNavigationBarType.fixed,
+          selectedFontSize: 11,
+          unselectedFontSize: 11,
+          items: [
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.dashboard_outlined),
+              activeIcon: const Icon(Icons.dashboard),
+              label: TranslationService.t('home'),
             ),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentTab,
-        onTap: (index) {
-          setState(() {
-            _currentTab = index;
-          });
-        },
-        type: BottomNavigationBarType.fixed,
-        selectedFontSize: 11,
-        unselectedFontSize: 11,
-        items: [
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.dashboard_outlined),
-            activeIcon: const Icon(Icons.dashboard),
-            label: TranslationService.t('home'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.menu_book_outlined),
-            activeIcon: const Icon(Icons.menu_book),
-            label: TranslationService.t('quran'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.access_time),
-            activeIcon: const Icon(Icons.access_time_filled),
-            label: TranslationService.t('prayer'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.explore_outlined),
-            activeIcon: const Icon(Icons.explore),
-            label: TranslationService.t('qibla'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.fingerprint_outlined),
-            activeIcon: const Icon(Icons.fingerprint),
-            label: TranslationService.t('tasbih'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.volunteer_activism_outlined),
-            activeIcon: const Icon(Icons.volunteer_activism),
-            label: TranslationService.t('azkar'),
-          ),
-        ],
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.menu_book_outlined),
+              activeIcon: const Icon(Icons.menu_book),
+              label: TranslationService.t('quran'),
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.access_time),
+              activeIcon: const Icon(Icons.access_time_filled),
+              label: TranslationService.t('prayer'),
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.explore_outlined),
+              activeIcon: const Icon(Icons.explore),
+              label: TranslationService.t('qibla'),
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.fingerprint_outlined),
+              activeIcon: const Icon(Icons.fingerprint),
+              label: TranslationService.t('tasbih'),
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.volunteer_activism_outlined),
+              activeIcon: const Icon(Icons.volunteer_activism),
+              label: TranslationService.t('azkar'),
+            ),
+          ],
+        ),
       ),
     );
   }

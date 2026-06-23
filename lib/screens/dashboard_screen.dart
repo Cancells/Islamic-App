@@ -1,21 +1,27 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/prayer_models.dart';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
 import '../services/translation_service.dart';
+import '../services/notification_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   final StorageService storage;
   final Function(int) onTabChange;
   final Map<String, dynamic> lastBookmark;
+  final VoidCallback onContinueReading;
+  final Function(int) onStartFocusLock;
 
   const DashboardScreen({
-    Key? key,
+    super.key,
     required this.storage,
     required this.onTabChange,
     required this.lastBookmark,
-  }) : super(key: key);
+    required this.onContinueReading,
+    required this.onStartFocusLock,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -24,9 +30,46 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   PrayerTimeData? _prayerData;
   bool _isLoading = true;
+  bool _hasError = false;
   String _nextPrayerName = '-';
   Duration _nextPrayerCountdown = Duration.zero;
   Timer? _timer;
+  Map<String, dynamic>? _lastLoadedLocation;
+  int? _lastLoadedCalcMethod;
+  int? _lastLoadedAsrMethod;
+
+  static const List<Map<String, String>> _versePresets = [
+    {'text': 'اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ ۚ لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ', 'ref': 'سورة البقرة: ٢٥٥'},
+    {'text': 'إِنَّ مَعَ الْعُسْرِ يُسْرًا', 'ref': 'سورة الشرح: ٦'},
+    {'text': 'أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ', 'ref': 'سورة الرعد: ٢٨'},
+    {'text': 'وَقُلْ رَبِّ زِدْنِي عِلْمًا', 'ref': 'سورة طه: ١١٤'},
+    {'text': 'إِنَّ اللَّهَ وَمَلَائِكَتَهُ يُصَلُّونَ عَلَى النَّبِيِّ ۚ يَا أَيُّهَا الَّذِينَ آمَنُوا صَلُّوا عَلَيْهِ وَسَلِّمُوا تَسْلِيمًا', 'ref': 'سورة الأحزاب: ٥٦'},
+    {'text': 'وَقَالَ رَبُّكُمُ ادْعُونِي أَسْتَجِبْ لَكُمْ', 'ref': 'سورة غافر: ٦٠'},
+    {'text': 'وَاصْبِرْ لِحُكْمِ رَبِّكَ فَإِنَّكَ بِأَعْيُنِنَا', 'ref': 'سورة الطور: ٤٨'},
+    {'text': 'وَمَنْ يَتَّقِ اللَّهَ يَجْعَلْ لَهُ مَخْرَجًا وَيَرْزُقْهُ مِنْ حَيْثُ لَا يَحْتَسِبُ', 'ref': 'سورة الطلاق: ٢-٣'}
+  ];
+
+  static const List<String> _dhikrPresets = [
+    'سُبْحَانَ اللَّهِ وَبِحَمْدِهِ ، سُبْحَانَ اللَّهِ الْعَظِيمِ',
+    'لَا إِلَٰهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ',
+    'لَا حَوْلَ وَلَا قُوَّةَ إِلَّا بِاللَّهِ',
+    'أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ',
+    'اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ',
+    'الْحَمْدُ لِلَّهِ حَمْدًا كَثِيرًا طَيِّبًا مُبَارَكًا فِيهِ',
+    'لَا إِلَٰهَ إِلَّا أَنْتَ سُبْحَانَكَ إِنِّي كُنْتُ مِنَ الظَّالِمِينَ',
+    'حَسْبُنَا اللَّهَ وَنِعْمَ الْوَكِيلُ'
+  ];
+
+  static const List<Map<String, String>> _hadithPresets = [
+    {'text': 'إنما الأعمال بالنيات، وإنما لكل امرئ ما نوى', 'ref': 'رواه البخاري ومسلم'},
+    {'text': 'الطهور شطر الإيمان، والحمد لله تملأ الميزان', 'ref': 'رواه مسلم'},
+    {'text': 'اتق الله حيثما كنت، وأتبع السيئة الحسنة تمحها', 'ref': 'رواه الترمذي'},
+    {'text': 'يسروا ولا تعسروا، وبشروا ولا تنفروا', 'ref': 'رواه البخاري'},
+    {'text': 'من سلك طريقًا يلتمس فيه علمًا، سهل الله له به طريقًا إلى الجنة', 'ref': 'رواه مسلم'},
+    {'text': 'الدين النصيحة', 'ref': 'رواه مسلم'},
+    {'text': 'من كان يؤمن بالله واليوم الآخر فليقل خيرًا أو ليصمت', 'ref': 'رواه البخاري ومسلم'},
+    {'text': 'تبسمك في وجه أخيك لك صدقة', 'ref': 'رواه الترمذي'}
+  ];
 
   @override
   void initState() {
@@ -36,17 +79,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final location = widget.storage.getLocation();
+    final method = widget.storage.getInt('calc_method', defaultValue: 2);
+    final school = widget.storage.getInt('asr_method', defaultValue: 0);
+
+    if (_lastLoadedLocation == null ||
+        _lastLoadedLocation!['latitude'] != location['latitude'] ||
+        _lastLoadedLocation!['longitude'] != location['longitude'] ||
+        _lastLoadedLocation!['city'] != location['city'] ||
+        _lastLoadedCalcMethod != method ||
+        _lastLoadedAsrMethod != school) {
+      _loadPrayerTimes();
+    }
+  }
+
+  @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
   }
 
   Future<void> _loadPrayerTimes() async {
-    setState(() => _isLoading = true);
     try {
+      setState(() {
+        _isLoading = true;
+        _hasError = false;
+      });
       final loc = widget.storage.getLocation();
       final method = widget.storage.getInt('calc_method', defaultValue: 2);
       final school = widget.storage.getInt('asr_method', defaultValue: 0);
+
+      _lastLoadedLocation = loc;
+      _lastLoadedCalcMethod = method;
+      _lastLoadedAsrMethod = school;
 
       PrayerTimeData data;
       if (loc['source'] == 'default' || loc['latitude'] == 30.0444) {
@@ -71,10 +138,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
       _calculateNextPrayer();
     } catch (e) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load prayer times: $e')),
-      );
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasError = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(TranslationService.isArabic ? 'فشل تحميل مواقيت الصلاة: $e' : 'Failed to load prayer times: $e')),
+        );
+      }
     }
   }
 
@@ -137,6 +209,64 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _nextPrayerName = nextPrayerName;
       _nextPrayerCountdown = nextPrayerTime!.difference(now);
     });
+    _updateWidgetPreferences();
+  }
+
+  String _formatWidgetNextDisplay(Duration duration) {
+    if (duration.inHours > 0) {
+      final hours = duration.inHours;
+      final mins = duration.inMinutes.remainder(60);
+      return TranslationService.isArabic ? "بعد $hoursس و $minsد" : "in ${hours}h ${mins}m";
+    } else {
+      final mins = duration.inMinutes;
+      return TranslationService.isArabic ? "بعد $minsد" : "in ${mins}m";
+    }
+  }
+
+  Future<void> _updateWidgetPreferences() async {
+    if (_prayerData == null) return;
+    final prefs = widget.storage;
+
+    Future<void> setStringIfChanged(String key, String val) async {
+      if (prefs.getString(key) != val) {
+        await prefs.setString(key, val);
+      }
+    }
+
+    await setStringIfChanged('widget_prayer_fajr', _prayerData!.fajr);
+    await setStringIfChanged('widget_prayer_dhuhr', _prayerData!.dhuhr);
+    await setStringIfChanged('widget_prayer_asr', _prayerData!.asr);
+    await setStringIfChanged('widget_prayer_maghrib', _prayerData!.maghrib);
+    await setStringIfChanged('widget_prayer_isha', _prayerData!.isha);
+
+    final currentActive = _getCurrentPrayerName();
+    await setStringIfChanged('widget_active_prayer', currentActive);
+
+    final localizedNextName = TranslationService.t(_nextPrayerName.toLowerCase());
+    await setStringIfChanged('widget_next_prayer_name', localizedNextName);
+
+    // Deterministic daily verse & dhikr selection
+    final dayOfYear = DateTime.now().difference(DateTime(DateTime.now().year, 1, 1)).inDays;
+    
+    final verseIdx = dayOfYear % _versePresets.length;
+    final dhikrIdx = dayOfYear % _dhikrPresets.length;
+    final hadithIdx = dayOfYear % _hadithPresets.length;
+
+    await setStringIfChanged('widget_verse_text', _versePresets[verseIdx]['text']!);
+    await setStringIfChanged('widget_verse_ref', _versePresets[verseIdx]['ref']!);
+    await setStringIfChanged('widget_dhikr_text', _dhikrPresets[dhikrIdx]);
+    await setStringIfChanged('widget_hadith_text', _hadithPresets[hadithIdx]['text']!);
+    await setStringIfChanged('widget_hadith_ref', _hadithPresets[hadithIdx]['ref']!);
+
+    final nextDisplay = _formatWidgetNextDisplay(_nextPrayerCountdown);
+    final lastDisplay = prefs.getString('widget_widget_next_display');
+    if (nextDisplay != lastDisplay) {
+      await prefs.setString('widget_widget_next_display', nextDisplay);
+      try {
+        const platform = MethodChannel('com.noor.noor_app/system');
+        await platform.invokeMethod('updateWidget');
+      } catch (_) {}
+    }
   }
 
   String _formatDuration(Duration duration) {
@@ -145,6 +275,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final minutes = twoDigits(duration.inMinutes.remainder(60));
     final seconds = twoDigits(duration.inSeconds.remainder(60));
     return "$hours:$minutes:$seconds";
+  }
+
+  String _getCurrentPrayerName() {
+    switch (_nextPrayerName) {
+      case 'Fajr':
+        return 'Isha';
+      case 'Sunrise':
+        return 'Fajr';
+      case 'Dhuhr':
+        return 'Sunrise';
+      case 'Asr':
+        return 'Dhuhr';
+      case 'Maghrib':
+        return 'Asr';
+      case 'Isha':
+        return 'Maghrib';
+      default:
+        return 'Fajr';
+    }
   }
 
   @override
@@ -206,7 +355,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Text(
                     TranslationService.t('hardship_ease'),
                     style: const TextStyle(
-                      color: Colors.whitee70,
+                      color: Colors.white70,
                       fontSize: 14,
                       fontStyle: FontStyle.italic,
                     ),
@@ -216,13 +365,75 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 24),
 
+            if (NotificationService.timezoneFallbackToUtc) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  border: Border.all(color: Colors.orange.withOpacity(0.4)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        TranslationService.isArabic
+                            ? "فشل تحديد المنطقة الزمنية تلقائياً. تم ضبطها افتراضياً على UTC. قد تكون مواقيت التنبيهات غير دقيقة."
+                            : "Auto timezone detection failed. Defaulted to UTC. Alarms might be offset.",
+                        style: TextStyle(
+                          color: isDark ? Colors.orange[200] : Colors.orange[800],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // Live Countdown Card
             _isLoading
                 ? const Center(child: Padding(
                     padding: EdgeInsets.all(24.0),
                     child: CircularProgressIndicator(color: Color(0xFFE5C158)),
                   ))
-                : Container(
+                : _hasError
+                    ? Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: theme.cardColor,
+                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Column(
+                          children: [
+                            const Icon(Icons.error_outline, color: Colors.red, size: 40),
+                            const SizedBox(height: 12),
+                            Text(
+                              TranslationService.isArabic 
+                                  ? "فشل في تحميل مواقيت الصلاة" 
+                                  : "Failed to load prayer times",
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 12),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFE5C158),
+                                foregroundColor: Colors.black,
+                              ),
+                              onPressed: _loadPrayerTimes,
+                              child: Text(TranslationService.isArabic ? "إعادة المحاولة" : "Retry"),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
                       color: theme.cardColor,
@@ -274,7 +485,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-                        const Divider(color: Colors.white10),
+                        Divider(color: theme.dividerColor),
                         const SizedBox(height: 8),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -309,7 +520,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   subtitle: widget.lastBookmark.isEmpty 
                       ? TranslationService.t('no_active_bookmark') 
                       : "${TranslationService.isArabic ? 'سورة' : 'Surah'} ${widget.lastBookmark['surahName']} : ${TranslationService.isArabic ? 'الآية' : 'Ayah'} ${widget.lastBookmark['ayahNumber']}",
-                  onTap: () => widget.onTabChange(1), // Quran Tab
+                  onTap: () {
+                    if (widget.lastBookmark.isNotEmpty) {
+                      widget.onContinueReading();
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(TranslationService.isArabic
+                              ? "لا توجد علامة مرجعية بعد. ابدأ القراءة أولاً."
+                              : "No bookmark saved yet. Start reading first."),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
                 ),
                 _buildQuickCard(
                   context: context,
@@ -352,7 +576,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   decoration: BoxDecoration(
                     color: theme.cardColor,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white10),
+                    border: Border.all(color: theme.dividerColor),
                   ),
                   child: Text(
                     "${location['city']}, ${location['country']}",
@@ -431,7 +655,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
             color: theme.cardColor,
-            border: Border.all(color: Colors.white15),
+            border: Border.all(color: theme.dividerColor),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
@@ -475,7 +699,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
               Icon(
-                Icons.chevron_right,
+                TranslationService.isArabic ? Icons.chevron_left : Icons.chevron_right,
                 size: 16,
                 color: theme.textTheme.bodyMedium?.color?.withOpacity(0.4),
               ),
@@ -492,12 +716,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     
     return Container(
       width: 100,
-      margin: const EdgeInsets.only(right: 8),
+      margin: const EdgeInsetsDirectional.only(end: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: isCurrent ? const Color(0xFFE5C158).withOpacity(0.12) : theme.cardColor,
         border: Border.all(
-          color: isCurrent ? const Color(0xFFE5C158).withOpacity(0.5) : Colors.white10,
+          color: isCurrent ? const Color(0xFFE5C158).withOpacity(0.5) : theme.dividerColor,
         ),
         borderRadius: BorderRadius.circular(12),
       ),

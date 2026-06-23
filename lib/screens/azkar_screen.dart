@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/azkar_data.dart';
 import '../services/storage_service.dart';
+import '../services/translation_service.dart';
 
 class AzkarScreen extends StatefulWidget {
   final StorageService storage;
+  final int initialTabIndex;
 
   const AzkarScreen({
-    Key? key,
+    super.key,
     required this.storage,
-  }) : super(key: key);
+    this.initialTabIndex = 0,
+  });
 
   @override
   State<AzkarScreen> createState() => _AzkarScreenState();
@@ -22,8 +25,25 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(
+      length: 4, 
+      vsync: this,
+      initialIndex: widget.initialTabIndex,
+    );
+    _tabController.addListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
     _initializeCounts();
+  }
+
+  @override
+  void didUpdateWidget(covariant AzkarScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialTabIndex != widget.initialTabIndex) {
+      _tabController.animateTo(widget.initialTabIndex);
+    }
   }
 
   @override
@@ -33,28 +53,30 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
   }
 
   void _initializeCounts() {
-    // Set up standard counts for each item
+    // Set up standard counts for each item, loading from persistence if available
     for (var item in AzkarData.morning) {
-      _countsCache[item.id] = item.count;
+      _countsCache[item.id] = widget.storage.getInt('azkar_count_${item.id}', defaultValue: item.count);
     }
     for (var item in AzkarData.evening) {
-      _countsCache[item.id] = item.count;
+      _countsCache[item.id] = widget.storage.getInt('azkar_count_${item.id}', defaultValue: item.count);
     }
     for (var item in AzkarData.postPrayer) {
-      _countsCache[item.id] = item.count;
+      _countsCache[item.id] = widget.storage.getInt('azkar_count_${item.id}', defaultValue: item.count);
     }
     for (var item in AzkarData.daily) {
-      _countsCache[item.id] = item.count;
+      _countsCache[item.id] = widget.storage.getInt('azkar_count_${item.id}', defaultValue: item.count);
     }
   }
 
   void _decrementCount(String id, int originalMax) {
     final current = _countsCache[id] ?? originalMax;
     if (current > 0) {
+      final newCount = current - 1;
       setState(() {
-        _countsCache[id] = current - 1;
+        _countsCache[id] = newCount;
       });
-      if (current - 1 == 0) {
+      widget.storage.setInt('azkar_count_$id', newCount);
+      if (newCount == 0) {
         HapticFeedback.vibrate(); // Celebration vibration
       } else {
         HapticFeedback.lightImpact();
@@ -66,32 +88,119 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
     setState(() {
       for (var item in items) {
         _countsCache[item.id] = item.count;
+        widget.storage.setInt('azkar_count_${item.id}', item.count);
       }
     });
     HapticFeedback.mediumImpact();
   }
 
+  String _getTabProgress(List<AzkarItem> items) {
+    int completed = 0;
+    for (var item in items) {
+      final current = _countsCache[item.id] ?? item.count;
+      if (current == 0) {
+        completed++;
+      }
+    }
+    return "$completed/${items.length}";
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = widget.storage.isDarkMode();
 
     return Column(
       children: [
         // Category Tabs
-        TabBar(
-          controller: _tabController,
-          indicatorColor: const Color(0xFFE5C158),
-          labelColor: const Color(0xFFE5C158),
-          unselectedLabelColor: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
-          isScrollable: true,
-          physics: const BouncingScrollPhysics(),
-          tabs: const [
-            Tab(text: "Morning"),
-            Tab(text: "Evening"),
-            Tab(text: "Post-Prayer"),
-            Tab(text: "Daily Duas"),
-          ],
+        Container(
+          height: 56,
+          margin: const EdgeInsets.only(top: 4),
+          child: TabBar(
+            controller: _tabController,
+            indicatorColor: const Color(0xFFE5C158),
+            labelColor: const Color(0xFFE5C158),
+            unselectedLabelColor: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+            isScrollable: true,
+            physics: const BouncingScrollPhysics(),
+            tabs: [
+              Tab(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(TranslationService.t('morning')),
+                    const SizedBox(height: 2),
+                    Text(
+                      _getTabProgress(AzkarData.morning),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _tabController.index == 0
+                            ? const Color(0xFFE5C158)
+                            : theme.textTheme.bodyMedium?.color?.withOpacity(0.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Tab(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(TranslationService.t('evening')),
+                    const SizedBox(height: 2),
+                    Text(
+                      _getTabProgress(AzkarData.evening),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _tabController.index == 1
+                            ? const Color(0xFFE5C158)
+                            : theme.textTheme.bodyMedium?.color?.withOpacity(0.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Tab(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(TranslationService.t('post_prayer')),
+                    const SizedBox(height: 2),
+                    Text(
+                      _getTabProgress(AzkarData.postPrayer),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _tabController.index == 2
+                            ? const Color(0xFFE5C158)
+                            : theme.textTheme.bodyMedium?.color?.withOpacity(0.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Tab(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(TranslationService.t('daily_duas')),
+                    const SizedBox(height: 2),
+                    Text(
+                      _getTabProgress(AzkarData.daily),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _tabController.index == 3
+                            ? const Color(0xFFE5C158)
+                            : theme.textTheme.bodyMedium?.color?.withOpacity(0.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         
         // Tab views
@@ -123,9 +232,9 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
               TextButton.icon(
                 onPressed: () => _resetAzkarTab(list),
                 icon: const Icon(Icons.restore, size: 16, color: Color(0xFFE5C158)),
-                label: const Text(
-                  "Reset Counts",
-                  style: TextStyle(color: Color(0xFFE5C158), fontSize: 12, fontWeight: FontWeight.bold),
+                label: Text(
+                  TranslationService.t('reset_counts'),
+                  style: const TextStyle(color: Color(0xFFE5C158), fontSize: 12, fontWeight: FontWeight.bold),
                 ),
               )
             ],
@@ -170,7 +279,7 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              "Read ${item.count} times",
+                              "${TranslationService.t('read')} ${item.count} ${TranslationService.t('times')}",
                               style: const TextStyle(
                                 color: Color(0xFFE5C158),
                                 fontSize: 10,
@@ -189,7 +298,9 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
                             ),
                             icon: Icon(isDone ? Icons.check : Icons.fingerprint, size: 14),
                             label: Text(
-                              isDone ? "Done" : "$currentCount remaining",
+                              isDone 
+                                  ? TranslationService.t('done') 
+                                  : "$currentCount ${TranslationService.t('remaining')}",
                               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
                             ),
                             onPressed: isDone ? null : () => _decrementCount(item.id, item.count),
@@ -237,7 +348,7 @@ class _AzkarScreenState extends State<AzkarScreen> with SingleTickerProviderStat
                       const SizedBox(height: 12),
                       // Reference citation
                       Text(
-                        "Source: ${item.reference}",
+                        "${TranslationService.isArabic ? 'المصدر' : 'Source'}: ${item.reference}",
                         style: TextStyle(
                           fontSize: 10,
                           color: theme.textTheme.bodyMedium?.color?.withOpacity(0.4),

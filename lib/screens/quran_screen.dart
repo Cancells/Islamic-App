@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/quran_models.dart';
 import '../services/api_service.dart';
@@ -7,13 +8,11 @@ import 'surah_reader_screen.dart';
 
 class QuranScreen extends StatefulWidget {
   final StorageService storage;
-  final Function(int surahNum, String surahName, int ayahNum, String audioUrl) onPlayAudio;
 
   const QuranScreen({
-    Key? key,
+    super.key,
     required this.storage,
-    required this.onPlayAudio,
-  }) : super(key: key);
+  });
 
   @override
   State<QuranScreen> createState() => _QuranScreenState();
@@ -23,6 +22,7 @@ class _QuranScreenState extends State<QuranScreen> {
   List<Surah> _surahList = [];
   List<Surah> _filteredSurahList = [];
   bool _isLoading = true;
+  bool _hasError = false;
   final TextEditingController _searchController = TextEditingController();
 
   @override
@@ -31,8 +31,17 @@ class _QuranScreenState extends State<QuranScreen> {
     _loadSurahs();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadSurahs() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+    });
     try {
       final list = await ApiService.fetchSurahList();
       setState(() {
@@ -41,11 +50,21 @@ class _QuranScreenState extends State<QuranScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load Surah list: $e')),
-      );
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasError = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(TranslationService.isArabic ? 'فشل تحميل قائمة السور: $e' : 'Failed to load Surah list: $e')),
+        );
+      }
     }
+  }
+
+  String _stripTashkeel(String input) {
+    final RegExp tashkeelRegex = RegExp(r'[\u064B-\u065F\u0670]');
+    return input.replaceAll(tashkeelRegex, '');
   }
 
   void _filterSurahs(String query) {
@@ -57,10 +76,14 @@ class _QuranScreenState extends State<QuranScreen> {
     }
 
     final lower = query.toLowerCase();
+    final cleanQuery = _stripTashkeel(lower);
     setState(() {
       _filteredSurahList = _surahList.where((surah) {
+        final cleanName = _stripTashkeel(surah.name);
         return surah.englishName.toLowerCase().contains(lower) ||
             surah.englishNameTranslation.toLowerCase().contains(lower) ||
+            cleanName.contains(cleanQuery) ||
+            surah.name.contains(query) ||
             surah.number.toString() == query;
       }).toList();
     });
@@ -117,20 +140,43 @@ class _QuranScreenState extends State<QuranScreen> {
               ? const Center(
                   child: CircularProgressIndicator(color: Color(0xFFE5C158)),
                 )
-              : _filteredSurahList.isEmpty
+              : _hasError
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.search_off, size: 48, color: theme.disabledColor),
+                          const Icon(Icons.error_outline, size: 48, color: Colors.red),
                           const SizedBox(height: 12),
                           Text(
-                            TranslationService.t('no_surah_match'),
+                            TranslationService.isArabic ? "فشل تحميل قائمة السور" : "Failed to load Surah list",
                             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 12),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFE5C158),
+                              foregroundColor: Colors.black,
+                            ),
+                            onPressed: _loadSurahs,
+                            child: Text(TranslationService.isArabic ? "إعادة المحاولة" : "Retry"),
                           ),
                         ],
                       ),
                     )
+                  : _filteredSurahList.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.search_off, size: 48, color: theme.disabledColor),
+                              const SizedBox(height: 12),
+                              Text(
+                                TranslationService.t('no_surah_match'),
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        )
                   : ListView.builder(
                       physics: const BouncingScrollPhysics(),
                       itemCount: _filteredSurahList.length,
@@ -145,82 +191,110 @@ class _QuranScreenState extends State<QuranScreen> {
   }
 
   Widget _buildSurahTile(Surah surah, ThemeData theme, bool isDark) {
-    return Column(
-      children: [
-        ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          leading: Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE5C158).withOpacity(0.08),
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFFE5C158).withOpacity(0.15)),
-            ),
-            child: Center(
-              child: Text(
+    return Card(
+      color: theme.cardColor,
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: const Color(0xFFE5C158).withOpacity(0.12), width: 1),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: SizedBox(
+          width: 44,
+          height: 44,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Transform.rotate(
+                angle: pi / 4,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFFE5C158).withOpacity(0.3), width: 1.5),
+                    color: const Color(0xFFE5C158).withOpacity(0.08),
+                  ),
+                ),
+              ),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0xFFE5C158).withOpacity(0.3), width: 1.5),
+                ),
+              ),
+              Text(
                 surah.number.toString(),
                 style: const TextStyle(
                   color: Color(0xFFE5C158),
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          title: Text(
-            surah.englishName,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
-            ),
-          ),
-          subtitle: Row(
-            children: [
-              Text(
-                surah.revelationType.toUpperCase(),
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
-                ),
-              ),
-              const SizedBox(width: 6),
-              const Icon(Icons.circle, size: 4, color: Colors.white24),
-              const SizedBox(width: 6),
-              Text(
-                "${surah.numberOfAyahs} ${TranslationService.t('verses')}",
-                style: TextStyle(
-                  fontSize: 10,
-                  color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
             ],
           ),
-          trailing: Text(
-            surah.name,
-            style: const TextStyle(
-              fontFamily: 'Amiri', // Arabic font loaded
-              color: Color(0xFFE5C158),
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => SurahReaderScreen(
-                  surah: surah,
-                  storage: widget.storage,
-                  onPlayAudio: widget.onPlayAudio,
-                ),
-              ),
-            );
-          },
         ),
-        const Divider(height: 1, color: Colors.white10, indent: 68),
-      ],
+        title: Text(
+          surah.englishName,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 15,
+          ),
+        ),
+        subtitle: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            Text(
+              surah.revelationType.toUpperCase(),
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+              ),
+            ),
+            Icon(Icons.circle, size: 4, color: theme.dividerColor),
+            Text(
+              "${surah.numberOfAyahs} ${TranslationService.t('verses')}",
+              style: TextStyle(
+                fontSize: 10,
+                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+              ),
+            ),
+            Icon(Icons.circle, size: 4, color: theme.dividerColor),
+            Text(
+              "${TranslationService.t('juz')} ${surah.startingJuz} • ${TranslationService.t('hizb')} ${surah.startingHizb}",
+              style: TextStyle(
+                fontSize: 10,
+                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+              ),
+            ),
+          ],
+        ),
+        trailing: Text(
+          surah.name,
+          style: const TextStyle(
+            fontFamily: 'Amiri', // Arabic font loaded
+            color: Color(0xFFE5C158),
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => SurahReaderScreen(
+                surah: surah,
+                storage: widget.storage,
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }

@@ -1,15 +1,18 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/prayer_models.dart';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
+import '../services/translation_service.dart';
 
 class PrayerTimesScreen extends StatefulWidget {
   final StorageService storage;
 
   const PrayerTimesScreen({
-    Key? key,
+    super.key,
     required this.storage,
-  }) : super(key: key);
+  });
 
   @override
   State<PrayerTimesScreen> createState() => _PrayerTimesScreenState();
@@ -30,6 +33,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
   }
 
   Future<void> _loadPrayerTimes() async {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     setState(() => _isLoading = true);
     try {
       final loc = widget.storage.getLocation();
@@ -57,19 +61,75 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
       });
     } catch (e) {
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading prayer times: $e')),
+      scaffoldMessenger.showSnackBar(
+        SnackBar(content: Text(TranslationService.isArabic ? 'خطأ في تحميل مواقيت الصلاة: $e' : 'Error loading prayer times: $e')),
       );
     }
   }
 
-  void _saveSettings() async {
-    await widget.storage.setInt('calc_method', _calcMethod);
-    await widget.storage.setInt('asr_method', _asrMethod);
-    _loadPrayerTimes();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Settings updated!'), duration: Duration(seconds: 1)),
-    );
+  @override
+  void didUpdateWidget(covariant PrayerTimesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final newCalc = widget.storage.getInt('calc_method', defaultValue: 2);
+    final newAsr = widget.storage.getInt('asr_method', defaultValue: 0);
+    if (newCalc != _calcMethod || newAsr != _asrMethod) {
+      setState(() {
+        _calcMethod = newCalc;
+        _asrMethod = newAsr;
+      });
+      _loadPrayerTimes();
+    }
+  }
+
+  Future<void> _updateLocationWithGPS() async {
+    setState(() => _isLoading = true);
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw Exception(TranslationService.isArabic ? 'خدمات الموقع معطلة.' : 'Location services are disabled.');
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw Exception(TranslationService.isArabic ? 'تم رفض إذن الوصول للموقع.' : 'Location permissions are denied.');
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception(TranslationService.isArabic ? 'تم رفض إذن الموقع بشكل دائم.' : 'Location permissions are permanently denied.');
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+
+      final address = await ApiService.reverseGeocode(position.latitude, position.longitude);
+      await widget.storage.setLocation(
+        address['city'] ?? (TranslationService.isArabic ? 'موقعي' : 'My Location'),
+        address['country'] ?? 'GPS',
+        position.latitude,
+        position.longitude,
+        'gps',
+      );
+
+      await _loadPrayerTimes();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(TranslationService.isArabic ? 'تم تحديث الموقع إلى ${address['city']}، ${address['country']}!' : 'Location updated to ${address['city']}, ${address['country']}!')),
+        );
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(TranslationService.isArabic ? 'خطأ في تحديد الموقع (GPS): $e' : 'GPS Error: $e')),
+        );
+      }
+    }
   }
 
   void _showManualLocationDialog() {
@@ -87,23 +147,23 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
         final theme = Theme.of(context);
         return AlertDialog(
           backgroundColor: theme.cardColor,
-          title: const Text("Set Location Manually", style: TextStyle(color: Color(0xFFE5C158), fontWeight: FontWeight.bold)),
+          title: Text(TranslationService.t('set_manual_loc'), style: const TextStyle(color: Color(0xFFE5C158), fontWeight: FontWeight.bold)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: cityController,
-                decoration: const InputDecoration(
-                  labelText: 'City Name',
-                  hintText: 'e.g. London',
+                decoration: InputDecoration(
+                  labelText: TranslationService.t('city_name'),
+                  hintText: TranslationService.isArabic ? 'مثال: القاهرة' : 'e.g. London',
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: countryController,
-                decoration: const InputDecoration(
-                  labelText: 'Country Name',
-                  hintText: 'e.g. United Kingdom',
+                decoration: InputDecoration(
+                  labelText: TranslationService.t('country_name'),
+                  hintText: TranslationService.isArabic ? 'مثال: مصر' : 'e.g. United Kingdom',
                 ),
               ),
             ],
@@ -111,7 +171,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+              child: Text(TranslationService.t('cancel'), style: const TextStyle(color: Colors.white70)),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE5C158), foregroundColor: Colors.black),
@@ -119,15 +179,16 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
                 final city = cityController.text.trim();
                 final country = countryController.text.trim();
                 if (city.isNotEmpty && country.isNotEmpty) {
+                  final navigator = Navigator.of(context);
                   // Save coordinates as fallback or mock
                   // For manual inputs, we set fallback coordinates to Cairo or London coordinates, 
                   // but the API timingsByCity handles the city name directly
                   await widget.storage.setLocation(city, country, 30.0444, 31.2357, 'manual');
-                  Navigator.pop(context);
-                  _loadPrayerTimes();
+                  navigator.pop();
+                  unawaited(_loadPrayerTimes());
                 }
               },
-              child: const Text('Get Times'),
+              child: Text(TranslationService.t('get_times')),
             ),
           ],
         );
@@ -135,17 +196,52 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
     );
   }
 
+  String _getNextPrayerName() {
+    if (_prayerData == null) return '';
+    final now = DateTime.now();
+    final todayStr = now.toIso8601String().substring(0, 10);
+
+    final prayers = {
+      'Fajr': _prayerData!.fajr,
+      'Sunrise': _prayerData!.sunrise,
+      'Dhuhr': _prayerData!.dhuhr,
+      'Asr': _prayerData!.asr,
+      'Maghrib': _prayerData!.maghrib,
+      'Isha': _prayerData!.isha,
+    };
+
+    final List<MapEntry<String, DateTime>> todayPrayers = [];
+    prayers.forEach((name, timeStr) {
+      final cleanTime = timeStr.split(' ')[0];
+      try {
+        final parsed = DateTime.parse("${todayStr}T$cleanTime:00");
+        todayPrayers.add(MapEntry(name, parsed));
+      } catch (_) {}
+    });
+
+    todayPrayers.sort((a, b) => a.value.compareTo(b.value));
+
+    for (final entry in todayPrayers) {
+      if (entry.value.isAfter(now)) {
+        return entry.key;
+      }
+    }
+    return 'Fajr';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = widget.storage.isDarkMode();
     final loc = widget.storage.getLocation();
 
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
+    return RefreshIndicator(
+      onRefresh: _loadPrayerTimes,
+      color: const Color(0xFFE5C158),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Location Settings Card
@@ -175,12 +271,12 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    "Current Location: ${loc['city']}, ${loc['country']}",
+                    "${TranslationService.t('current_location')}: ${loc['city']}, ${loc['country']}",
                     style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    "Method: Lat/Lng (${loc['latitude']?.toStringAsFixed(4) ?? '--'}, ${loc['longitude']?.toStringAsFixed(4) ?? '--'})",
+                    "${TranslationService.isArabic ? 'الطريقة: الإحداثيات' : 'Method: Lat/Lng'} (${loc['latitude']?.toStringAsFixed(4) ?? '--'}, ${loc['longitude']?.toStringAsFixed(4) ?? '--'})",
                     style: TextStyle(fontSize: 12, color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5)),
                   ),
                   const SizedBox(height: 16),
@@ -193,18 +289,8 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
                             foregroundColor: Colors.black,
                           ),
                           icon: const Icon(Icons.my_location, size: 18),
-                          label: const Text("Use GPS"),
-                          onPressed: () async {
-                            // Geolocation simulation or update
-                            // Since geolocation requires manifest permissions and could block, 
-                            // we provide coordinates update (e.g. simulated coordinates) or manual input.
-                            // We set Makkah coordinates as mock location
-                            await widget.storage.setLocation("Makkah", "Saudi Arabia", 21.4225, 39.8262, 'gps');
-                            _loadPrayerTimes();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Location updated to Makkah (Simulated GPS)!')),
-                            );
-                          },
+                          label: Text(TranslationService.t('use_gps')),
+                          onPressed: _updateLocationWithGPS,
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -215,7 +301,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
                             foregroundColor: const Color(0xFFE5C158),
                           ),
                           icon: const Icon(Icons.keyboard, size: 18),
-                          label: const Text("Set Manually"),
+                          label: Text(TranslationService.t('set_manually')),
                           onPressed: _showManualLocationDialog,
                         ),
                       ),
@@ -226,84 +312,23 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Calculation parameters Card
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: theme.cardColor,
-                border: Border.all(color: Colors.white12),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.settings, color: Color(0xFFE5C158)),
-                      const SizedBox(width: 8),
-                      const Text(
-                        "Calculation Settings",
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<int>(
-                    value: _calcMethod,
-                    dropdownColor: theme.cardColor,
-                    decoration: const InputDecoration(labelText: 'Calculation Method'),
-                    items: const [
-                      DropdownMenuItem(value: 2, child: Text("ISNA (North America)")),
-                      DropdownMenuItem(value: 3, child: Text("Muslim World League")),
-                      DropdownMenuItem(value: 4, child: Text("Umm Al-Qura (Makkah)")),
-                      DropdownMenuItem(value: 1, child: Text("Egyptian Survey")),
-                      DropdownMenuItem(value: 13, child: Text("Diyanet (Turkey)")),
-                    ],
-                    onChanged: (val) {
-                      if (val != null) {
-                        setState(() => _calcMethod = val);
-                        _saveSettings();
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    value: _asrMethod,
-                    dropdownColor: theme.cardColor,
-                    decoration: const InputDecoration(labelText: 'Asr Calculation Method'),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text("Standard (Shafi'i, Maliki, Hanbali)")),
-                      DropdownMenuItem(value: 1, child: Text("Hanafi School (Later Asr)")),
-                    ],
-                    onChanged: (val) {
-                      if (val != null) {
-                        setState(() => _asrMethod = val);
-                        _saveSettings();
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-
             // Schedule Cards list
-            const Text(
-              "Daily Schedule",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Text(
+              TranslationService.t('daily_schedule'),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             
             _isLoading
                 ? const Center(child: CircularProgressIndicator(color: Color(0xFFE5C158)))
                 : _prayerData == null
-                    ? const Center(child: Text("No schedule details loaded."))
+                    ? Center(child: Text(TranslationService.isArabic ? "لم يتم تحميل مواقيت الصلاة بعد." : "No schedule details loaded."))
                     : Column(
                         children: [
                           _buildScheduleRow(theme, "Fajr", _prayerData!.fajr, Icons.cloud_queue),
                           _buildScheduleRow(theme, "Sunrise", _prayerData!.sunrise, Icons.wb_sunny_outlined),
                           _buildScheduleRow(theme, "Dhuhr", _prayerData!.dhuhr, Icons.wb_sunny),
-                          _buildScheduleRow(theme, "Asr", _prayerData!.asr, Icons.wb_twighlight),
+                          _buildScheduleRow(theme, "Asr", _prayerData!.asr, Icons.wb_twilight),
                           _buildScheduleRow(theme, "Maghrib", _prayerData!.maghrib, Icons.wb_cloudy_outlined),
                           _buildScheduleRow(theme, "Isha", _prayerData!.isha, Icons.nights_stay),
                         ],
@@ -311,6 +336,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
           ],
         ),
       ),
+     ),
     );
   }
 
@@ -318,11 +344,20 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
     final cleanTime = time.split(' ')[0];
     final alertKey = 'alert_${name.toLowerCase()}';
     final alertOn = widget.storage.getBool(alertKey, defaultValue: true);
+    final displayName = TranslationService.t(name.toLowerCase());
+    final isNext = name == _getNextPrayerName();
 
     return Card(
-      color: theme.cardColor,
+      color: isNext ? const Color(0xFFE5C158).withOpacity(0.08) : theme.cardColor,
       margin: const EdgeInsets.only(bottom: 10),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isNext ? const Color(0xFFE5C158).withOpacity(0.6) : Colors.transparent,
+          width: isNext ? 1.8 : 0.0,
+        ),
+      ),
+      elevation: isNext ? 4 : 0,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
         child: Row(
@@ -342,7 +377,7 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    name,
+                    displayName,
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                 ],
@@ -360,11 +395,14 @@ class _PrayerTimesScreenState extends State<PrayerTimesScreen> {
                 size: 20,
               ),
               onPressed: () async {
+                final scaffoldMessenger = ScaffoldMessenger.of(context);
                 await widget.storage.setBool(alertKey, !alertOn);
                 setState(() {});
-                ScaffoldMessenger.of(context).showSnackBar(
+                scaffoldMessenger.showSnackBar(
                   SnackBar(
-                    content: Text(alertOn ? '$name notifications muted' : '$name notifications activated'),
+                    content: Text(alertOn 
+                        ? (TranslationService.isArabic ? 'تم كتم تنبيهات $displayName' : '$name notifications muted') 
+                        : (TranslationService.isArabic ? 'تم تفعيل تنبيهات $displayName' : '$name notifications activated')),
                     duration: const Duration(seconds: 1),
                   ),
                 );

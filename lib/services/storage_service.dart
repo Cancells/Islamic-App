@@ -7,6 +7,13 @@ class StorageService {
 
   StorageService._();
 
+  static SharedPreferences get prefs {
+    if (_prefs == null) {
+      throw StateError('StorageService is not initialized. Call getInstance() first.');
+    }
+    return _prefs!;
+  }
+
   static Future<StorageService> getInstance() async {
     if (_instance == null) {
       _instance = StorageService._();
@@ -17,46 +24,43 @@ class StorageService {
 
   // General set/get
   Future<bool> setString(String key, String value) async {
-    return await _prefs!.setString(key, value);
+    return await prefs.setString(key, value);
   }
 
   String getString(String key, {String defaultValue = ''}) {
-    return _prefs!.getString(key) ?? defaultValue;
+    return prefs.getString(key) ?? defaultValue;
   }
 
   Future<bool> setBool(String key, bool value) async {
-    return await _prefs!.setBool(key, value);
+    return await prefs.setBool(key, value);
   }
 
   bool getBool(String key, {bool defaultValue = false}) {
-    return _prefs!.getBool(key) ?? defaultValue;
+    return prefs.getBool(key) ?? defaultValue;
   }
 
   Future<bool> setInt(String key, int value) async {
-    return await _prefs!.setInt(key, value);
+    return await prefs.setInt(key, value);
   }
 
   int getInt(String key, {int defaultValue = 0}) {
-    return _prefs!.getInt(key) ?? defaultValue;
+    return prefs.getInt(key) ?? defaultValue;
   }
 
   Future<bool> setDouble(String key, double value) async {
-    return await _prefs!.setDouble(key, value);
+    return await prefs.setDouble(key, value);
   }
 
   double getDouble(String key, {double defaultValue = 0.0}) {
-    return _prefs!.getDouble(key) ?? defaultValue;
+    return prefs.getDouble(key) ?? defaultValue;
   }
 
   // Specific state helpers
 
   // Dark/Light Theme
   bool isDarkMode() {
-    return getBool('is_dark_mode', defaultValue: true);
-  }
-
-  Future<bool> setDarkMode(bool val) async {
-    return await setBool('is_dark_mode', val);
+    final preset = getString('theme_preset', defaultValue: 'dark');
+    return preset != 'light' && preset != 'white_monet';
   }
 
   // Location Cache
@@ -106,8 +110,9 @@ class StorageService {
       'timestamp': DateTime.now().millisecondsSinceEpoch
     };
     
-    // Remove duplication for the same Surah
-    bookmarks.removeWhere((element) => element['surahNumber'] == surahNumber);
+    // Remove duplication for the same Surah and Ayah
+    bookmarks.removeWhere((element) =>
+        element['surahNumber'] == surahNumber && element['ayahNumber'] == ayahNumber);
     bookmarks.insert(0, item);
     
     // Cap at 10 bookmarks
@@ -118,9 +123,14 @@ class StorageService {
     await setString('quran_bookmarks', jsonEncode(bookmarks));
   }
 
-  Future<void> removeBookmark(int surahNumber) async {
+  Future<void> removeBookmark(int surahNumber, {int? ayahNumber}) async {
     final bookmarks = getBookmarks();
-    bookmarks.removeWhere((element) => element['surahNumber'] == surahNumber);
+    if (ayahNumber != null) {
+      bookmarks.removeWhere((element) =>
+          element['surahNumber'] == surahNumber && element['ayahNumber'] == ayahNumber);
+    } else {
+      bookmarks.removeWhere((element) => element['surahNumber'] == surahNumber);
+    }
     await setString('quran_bookmarks', jsonEncode(bookmarks));
   }
 
@@ -153,5 +163,9 @@ class StorageService {
     final items = getCustomDhikrs();
     items.removeWhere((element) => element['id'] == id);
     await setString('custom_dhikrs', jsonEncode(items));
+  }
+
+  Future<bool> remove(String key) async {
+    return await prefs.remove(key);
   }
 }

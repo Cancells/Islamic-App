@@ -1,20 +1,24 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/storage_service.dart';
+import '../services/translation_service.dart';
 
 class TasbihScreen extends StatefulWidget {
   final StorageService storage;
 
   const TasbihScreen({
-    Key? key,
+    super.key,
     required this.storage,
-  }) : super(key: key);
+  });
 
   @override
   State<TasbihScreen> createState() => _TasbihScreenState();
 }
 
-class _TasbihScreenState extends State<TasbihScreen> {
+class _TasbihScreenState extends State<TasbihScreen> with SingleTickerProviderStateMixin {
+  late AnimationController _bounceController;
+  late Animation<double> _scaleAnimation;
   int _count = 0;
   int _target = 33;
   String _arabicText = 'سُبْحَانَ ٱللَّٰهِ';
@@ -22,11 +26,37 @@ class _TasbihScreenState extends State<TasbihScreen> {
   String _currentDhikrName = 'SubhanAllah';
 
   List<Map<String, dynamic>> _presets = [];
+  Timer? _debouncer;
 
   @override
   void initState() {
     super.initState();
+    _bounceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 70),
+    );
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.94).animate(
+      CurvedAnimation(parent: _bounceController, curve: Curves.easeOutCubic),
+    );
     _loadPresets();
+    
+    // Restore active dhikr and count
+    final activeName = widget.storage.getString('active_dhikr_name', defaultValue: 'SubhanAllah');
+    final activeItem = _presets.firstWhere((p) => p['name'] == activeName, orElse: () => _presets[0]);
+    _currentDhikrName = activeItem['name'];
+    _arabicText = activeItem['arabic'] ?? '';
+    _translationText = activeItem['translation'] ?? '';
+    _target = activeItem['target'] ?? 33;
+    _count = widget.storage.getInt('tasbih_count_$_currentDhikrName', defaultValue: 0);
+
+    _updateWidgetData();
+  }
+
+  @override
+  void dispose() {
+    _debouncer?.cancel();
+    _bounceController.dispose();
+    super.dispose();
   }
 
   void _loadPresets() {
@@ -45,20 +75,39 @@ class _TasbihScreenState extends State<TasbihScreen> {
   }
 
   void _selectDhikr(Map<String, dynamic> item) {
+    _debouncer?.cancel();
+    // Save current count immediately before switching
+    widget.storage.setInt('tasbih_count_$_currentDhikrName', _count);
+
     setState(() {
       _currentDhikrName = item['name'];
       _arabicText = item['arabic'] ?? '';
       _translationText = item['translation'] ?? '';
       _target = item['target'] ?? 33;
-      _count = 0;
+      _count = widget.storage.getInt('tasbih_count_$_currentDhikrName', defaultValue: 0);
     });
+
+    widget.storage.setString('active_dhikr_name', _currentDhikrName);
+    widget.storage.setInt('tasbih_count_$_currentDhikrName', _count);
+    _updateWidgetData();
+
     HapticFeedback.mediumImpact();
   }
 
+  void _saveCountDebounced() {
+    _debouncer?.cancel();
+    _debouncer = Timer(const Duration(milliseconds: 500), () {
+      widget.storage.setInt('tasbih_count_$_currentDhikrName', _count);
+      _updateWidgetData();
+    });
+  }
+
   void _increment() {
+    _bounceController.forward(from: 0.0).then((_) => _bounceController.reverse());
     setState(() {
       _count++;
     });
+    _saveCountDebounced();
 
     if (_count == _target) {
       HapticFeedback.vibrate(); // Long vibrate on target reached
@@ -69,16 +118,56 @@ class _TasbihScreenState extends State<TasbihScreen> {
   }
 
   void _reset() {
-    setState(() {
-      _count = 0;
-    });
-    HapticFeedback.heavyImpact();
+    unawaited(showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Theme.of(context).cardColor,
+        title: Text(
+          TranslationService.isArabic ? "إعادة تعيين العداد؟" : "Reset Counter?",
+          style: const TextStyle(color: Color(0xFFE5C158), fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          TranslationService.isArabic 
+              ? "هل أنت متأكد من رغبتك في تصفير عداد الذكر الحالي؟" 
+              : "Are you sure you want to reset the counter for this Dhikr?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(TranslationService.t('cancel'), style: const TextStyle(color: Colors.white70)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              setState(() {
+                _count = 0;
+              });
+              HapticFeedback.heavyImpact();
+              widget.storage.setInt('tasbih_count_$_currentDhikrName', 0);
+              _updateWidgetData();
+            },
+            child: Text(TranslationService.isArabic ? "تصفير" : "Reset"),
+          ),
+        ],
+      ),
+    ));
+  }
+
+  Future<void> _updateWidgetData() async {
+    await widget.storage.setString('widget_tasbih_dhikr', _arabicText);
+    await widget.storage.setInt('widget_tasbih_count', _count);
+    await widget.storage.setInt('widget_tasbih_target', _target);
+    try {
+      const platform = MethodChannel('com.noor.noor_app/system');
+      await platform.invokeMethod('updateWidget');
+    } catch (_) {}
   }
 
   void _showTargetReachedNotification() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Target of $_target reached for $_currentDhikrName!'),
+        content: Text(TranslationService.isArabic ? 'تم الوصول للهدف $_target لـ $_currentDhikrName!' : 'Target of $_target reached for $_currentDhikrName!'),
         backgroundColor: Colors.green,
         duration: const Duration(seconds: 2),
       ),
@@ -97,31 +186,31 @@ class _TasbihScreenState extends State<TasbihScreen> {
         final theme = Theme.of(context);
         return AlertDialog(
           backgroundColor: theme.cardColor,
-          title: const Text("Add Custom Dhikr", style: TextStyle(color: Color(0xFFE5C158), fontWeight: FontWeight.bold)),
+          title: Text(TranslationService.t('add_custom_dhikr'), style: const TextStyle(color: Color(0xFFE5C158), fontWeight: FontWeight.bold)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Dhikr Name (English)'),
+                  decoration: InputDecoration(labelText: TranslationService.t('dhikr_name')),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: arabicController,
                   textDirection: TextDirection.rtl,
-                  decoration: const InputDecoration(labelText: 'Arabic Script (Optional)'),
+                  decoration: InputDecoration(labelText: TranslationService.t('arabic_script')),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: translationController,
-                  decoration: const InputDecoration(labelText: 'Translation (Optional)'),
+                  decoration: InputDecoration(labelText: TranslationService.isArabic ? 'الترجمة (اختياري)' : 'Translation (Optional)'),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: targetController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Target Count'),
+                  decoration: InputDecoration(labelText: TranslationService.t('target_count')),
                 ),
               ],
             ),
@@ -129,7 +218,7 @@ class _TasbihScreenState extends State<TasbihScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+              child: Text(TranslationService.t('cancel'), style: const TextStyle(color: Colors.white70)),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE5C158), foregroundColor: Colors.black),
@@ -143,11 +232,12 @@ class _TasbihScreenState extends State<TasbihScreen> {
                     translationController.text.trim(),
                     targetVal,
                   );
+                  if (!context.mounted) return;
                   Navigator.pop(context);
                   _loadPresets();
                 }
               },
-              child: const Text('Add'),
+              child: Text(TranslationService.t('add')),
             ),
           ],
         );
@@ -180,10 +270,10 @@ class _TasbihScreenState extends State<TasbihScreen> {
                     itemBuilder: (context, index) {
                       if (index == _presets.length) {
                         return Padding(
-                          padding: const EdgeInsets.only(right: 8.0),
+                          padding: const EdgeInsetsDirectional.only(end: 8.0),
                           child: ActionChip(
                             avatar: const Icon(Icons.add, size: 16, color: Color(0xFFE5C158)),
-                            label: const Text("Custom"),
+                            label: Text(TranslationService.t('custom')),
                             backgroundColor: theme.cardColor,
                             onPressed: _showAddCustomDhikrDialog,
                           ),
@@ -194,7 +284,7 @@ class _TasbihScreenState extends State<TasbihScreen> {
                       final isSelected = preset['name'] == _currentDhikrName;
                       
                       return Padding(
-                        padding: const EdgeInsets.only(right: 8.0),
+                        padding: const EdgeInsetsDirectional.only(end: 8.0),
                         child: ChoiceChip(
                           selectedColor: const Color(0xFFE5C158).withOpacity(0.2),
                           disabledColor: theme.cardColor,
@@ -253,59 +343,62 @@ class _TasbihScreenState extends State<TasbihScreen> {
                 // Big Click Area
                 GestureDetector(
                   onTap: _increment,
-                  child: Center(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // Progress Circle Ring
-                        SizedBox(
-                          width: 250,
-                          height: 250,
-                          child: CircularProgressIndicator(
-                            value: progressPercent,
-                            strokeWidth: 8,
-                            backgroundColor: Colors.white.withOpacity(0.04),
-                            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFE5C158)),
+                  child: ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: Center(
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // Progress Circle Ring
+                          SizedBox(
+                            width: 250,
+                            height: 250,
+                            child: CircularProgressIndicator(
+                              value: progressPercent,
+                              strokeWidth: 8,
+                              backgroundColor: Colors.white.withOpacity(0.04),
+                              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFE5C158)),
+                            ),
                           ),
-                        ),
-                        // Inner Click Button
-                        Container(
-                          width: 220,
-                          height: 220,
-                          decoration: BoxDecoration(
-                            color: theme.cardColor,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 15,
-                                offset: const Offset(0, 5),
-                              )
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                _count.toString(),
-                                style: const TextStyle(
-                                  fontSize: 64,
-                                  fontWeight: FontWeight.w800,
+                          // Inner Click Button
+                          Container(
+                            width: 220,
+                            height: 220,
+                            decoration: BoxDecoration(
+                              color: theme.cardColor,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  blurRadius: 15,
+                                  offset: const Offset(0, 5),
+                                )
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  _count.toString(),
+                                  style: const TextStyle(
+                                    fontSize: 64,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                "Target: $_target",
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: theme.textTheme.bodyMedium?.color?.withOpacity(0.4),
-                                  fontWeight: FontWeight.w600,
+                                const SizedBox(height: 2),
+                                Text(
+                                  "Target: $_target",
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: theme.textTheme.bodyMedium?.color?.withOpacity(0.4),
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -319,7 +412,7 @@ class _TasbihScreenState extends State<TasbihScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                   ),
                   icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text("Reset Count"),
+                  label: Text(TranslationService.t('reset_count')),
                   onPressed: _reset,
                 ),
                 const SizedBox(height: 16),
